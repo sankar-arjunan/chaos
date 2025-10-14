@@ -115,8 +115,6 @@ public:
     Value decodeValue() {
         uint8_t byte = readByte();
 
-        std::cout << "DECODE VALUE : " << (int)byte <<"\n";
-
         if ((byte & 0x80) == 0) {
             size_t strSize = byte & 0x7F;
             if (strSize == 0x7F) {
@@ -223,7 +221,6 @@ public:
             if (keyIdx >= dictionary.size()) throw std::runtime_error("Invalid key index");
             auto key = dictionary[keyIdx];
 
-            std::cout << "KEY : " << key <<"\n";
             if (key == target) {
                 return decodeValue();
             }
@@ -254,8 +251,6 @@ public:
         std::string targetString = query[queryOffset++];
 
         long target = std::stol(targetString);
-
-        std::cout << "QUERY  [LIST] : " << target <<"\n";
 
         masterOffset += target * offsetSize;
 
@@ -313,21 +308,17 @@ public:
 
 
     Value decodeWrapper(long id) {
-        std::cout << "ID = "<<id<<"\n";
         size_t savedOffset = masterOffset;
         masterOffset = entityTable.at(id) + baseOffset;
         
         uint8_t peek = fileData[masterOffset];
         Value v;
 
-        std::cout << "Q OFFSET : " << queryOffset <<" SIZE = "<<query.size() <<"\n";
         if(queryOffset < query.size()){
-            std::cout << "SELECTIVE : " << peek <<"\n";
             v = (peek & 0x80) ? decodeListSelective() : decodeObjectSelective();
         }
         else v = (peek & 0x80) ? decodeList() : decodeObject();
         
-        std::cout << "Q OFFSET AFTER : " << queryOffset <<"\n";
         masterOffset = savedOffset;
         return v;
     }

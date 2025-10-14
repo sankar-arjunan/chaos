@@ -1,5 +1,6 @@
 #include "encoder.hpp"
 #include "selective_decoder.cpp"
+#include "decoder.cpp"
 #include "datastruct.hpp"
 #include "json.hpp"
 #include <fstream>
@@ -120,58 +121,198 @@ Value jsonToValue(const json& j) {
     throw std::runtime_error("Unsupported JSON value type");
 }
 
+// int main(int argc, char* argv[]) {
+//     if (argc < 4) {
+//         std::cerr << "Usage: " << argv[0] << " input.json output.chaos encodeFlag[y/n] [query...]\n";
+//         return 1;
+//     }
+
+//     bool isSelective = false;
+    
+//     if(argc > 4) isSelective = true; 
+
+    
+
+//     std::string inputJsonFile  = argv[1];
+//     std::string outputChaosFile = argv[2];
+//     std::string isEncodingNeeded = argv[3];
+
+//     std::vector<std::string> query;
+//     for (int i = 4; i < argc; i++) {
+//         query.push_back(argv[i]);
+//     }
+
+//     try {
+//         Value rootValue; // declare outside so it’s in scope later
+
+//         auto tStart = std::chrono::high_resolution_clock::now();
+//         std::chrono::high_resolution_clock::time_point tParseEnd, tEncodeEnd, tDecodeEnd;
+
+//         if (isEncodingNeeded == "y") {
+//             std::ifstream ifs(inputJsonFile);
+//             if (!ifs) throw std::runtime_error("Failed to open JSON file: " + inputJsonFile);
+
+//             json j;
+//             ifs >> j;
+
+//             rootValue = jsonToValue(j);
+//             tParseEnd = std::chrono::high_resolution_clock::now();
+
+//             Encoder encoder;
+//             encoder.encode(rootValue, outputChaosFile);
+
+//             tEncodeEnd = std::chrono::high_resolution_clock::now();
+//         }
+
+//         MMapDecoderSelective decoder;
+//         decoder.setQuery(query);
+//         Value outP = decoder.decode(outputChaosFile);
+
+//         tDecodeEnd = std::chrono::high_resolution_clock::now();
+
+//         printValue(outP);
+
+//         bool isMilliSeconds = true;
+//         auto endMarker =  isMilliSeconds ? " ms (" : " μs\n";
+
+//         // ---- Timing ----
+//         if (isEncodingNeeded == "y") {
+//             auto parseTime  = std::chrono::duration_cast<std::chrono::milliseconds>(tParseEnd - tStart).count();
+//             auto encodeTime = std::chrono::duration_cast<std::chrono::milliseconds>(tEncodeEnd - tParseEnd).count();
+//             auto decodeTime = std::chrono::duration_cast<std::chrono::milliseconds>(tDecodeEnd - tEncodeEnd).count();
+//             auto totalTime  = std::chrono::duration_cast<std::chrono::milliseconds>(tDecodeEnd - tStart).count();
+
+//             std::cout << "\nParse JSON: " << parseTime << endMarker << (parseTime/1000) << " sec)\n";
+//             std::cout << "Encode CHAOS: " << encodeTime << endMarker << (encodeTime/1000) << " sec)\n"; 
+//             std::cout << "Decode CHAOS: " << decodeTime << endMarker << (decodeTime/1000) << " sec)\n";
+//             std::cout << "Total time: " << totalTime << endMarker << (totalTime/1000) << " sec)\n";
+//         }
+//         else{
+//             auto decodeTime = std::chrono::duration_cast<std::chrono::milliseconds>(tDecodeEnd - tStart).count();
+//             std::cout << "\nDecode CHAOS: " << decodeTime << endMarker << (decodeTime/1000) << " sec)\n";;
+//             std::cout << "Total time: " << decodeTime << endMarker << (decodeTime/1000) << " sec)\n";;
+//         }
+
+//         std::cout << "Output written to: " << outputChaosFile << "\n";
+
+//     } catch (const std::exception& ex) {
+//         std::cerr << "Error: " << ex.what() << "\n";
+//         return 1;
+//     }
+
+//     return 0;
+// }
+
 int main(int argc, char* argv[]) {
-    if (argc != 3) {
-        std::cerr << "Usage: " << argv[0] << " input.json output.chaos\n";
+    if (argc < 4) {
+        std::cerr << "Usage: " << argv[0] << " input.json output.chaos encodeFlag[y/n] [query...]\n";
         return 1;
     }
 
-    std::string inputJsonFile  = argv[1];
+    bool isSelective = false;
+    if(argc > 4) isSelective = true; 
+
+    std::string inputJsonFile   = argv[1];
     std::string outputChaosFile = argv[2];
+    std::string isEncodingNeeded = argv[3];
+
+    std::vector<std::string> query;
+    for (int i = 4; i < argc; i++) query.push_back(argv[i]);
 
     try {
-
-        // ------------------ Encode ------------------
-        Encoder encoder; // block size
-        MMapDecoderSelective decoder;
-
-        std::vector<std::string> q = {"3", "employee", "projects", "0", "tasks", "1", "details", "technologiesUsed", "2"};
-
-        decoder.setQuery(q);
-
-        std::ifstream ifs(inputJsonFile);
-        if (!ifs) throw std::runtime_error("Failed to open JSON file: " + inputJsonFile);
-
-        json j;
-        ifs >> j;
+        Value rootValue; // declare outside so it’s in scope later
 
         auto tStart = std::chrono::high_resolution_clock::now();
+        std::chrono::high_resolution_clock::time_point tParseEnd, tEncodeChaosEnd, tDecodeChaosEnd, tJsonWriteEnd;
 
-        Value rootValue = jsonToValue(j);
+        if (isEncodingNeeded == "y") {
+            // --- Parse JSON ---
+            std::ifstream ifs(inputJsonFile);
+            if (!ifs) throw std::runtime_error("Failed to open JSON file: " + inputJsonFile);
 
-        auto tParseEnd = std::chrono::high_resolution_clock::now();
+            json j;
+            ifs >> j;
 
-        encoder.encode(rootValue, outputChaosFile);
+            rootValue = jsonToValue(j);
+            tParseEnd = std::chrono::high_resolution_clock::now();
 
-        auto tEncodeEnd = std::chrono::high_resolution_clock::now();
+            // --- Encode to CHAOS ---
+            Encoder encoder;
+            encoder.encode(rootValue, outputChaosFile);
+            tEncodeChaosEnd = std::chrono::high_resolution_clock::now();
 
-        auto outP = decoder.decode(outputChaosFile);
+            // --- Write Value back to JSON ---
+            json outputJson;
+            std::function<json(const Value&)> valueToJson = [&](const Value& v) -> json {
+                switch (v.type()) {
+                    case ValueType::Null:    return nullptr;
+                    case ValueType::String:  return std::get<std::string>(v.data);
+                    case ValueType::Integer: return std::get<int64_t>(v.data);
+                    case ValueType::Float:   return std::get<double>(v.data);
+                    case ValueType::Boolean: return std::get<bool>(v.data);
+                    case ValueType::Byte:    return (int)std::get<uint8_t>(v.data);
+                    case ValueType::Object: {
+                        json jObj = json::object();
+                        const Object& obj = std::get<Object>(v.data);
+                        for (const auto& f : obj.fields) jObj[f.first] = valueToJson(f.second);
+                        return jObj;
+                    }
+                    case ValueType::List: {
+                        json jArr = json::array();
+                        const List& lst = std::get<List>(v.data);
+                        for (const auto& el : lst.elements) jArr.push_back(valueToJson(el));
+                        return jArr;
+                    }
+                    case ValueType::Custom: return "(Custom)"; // optional representation
+                    default: return "<unknown>";
+                }
+            };
 
-        auto tDecodeEnd = std::chrono::high_resolution_clock::now();
+            outputJson = valueToJson(rootValue);
 
-        printValue(rootValue);
+            std::string jsonOutputFile = outputChaosFile + ".json";
+            std::ofstream ofs(jsonOutputFile);
+            if (!ofs) throw std::runtime_error("Failed to open file for JSON output: " + jsonOutputFile);
+
+            auto tJsonStart = std::chrono::high_resolution_clock::now();
+            ofs << std::setw(2) << outputJson << std::endl;
+            tJsonWriteEnd = std::chrono::high_resolution_clock::now();
+        }
+
+        // --- Decode CHAOS ---
+        MMapDecoderSelective decoder;
+        decoder.setQuery(query);
+        Value outP = decoder.decode(outputChaosFile);
+        tDecodeChaosEnd = std::chrono::high_resolution_clock::now();
+
         printValue(outP);
-        // --------------   ---- Print timings ------------------
-        auto parseTime  = std::chrono::duration_cast<std::chrono::milliseconds>(tParseEnd - tStart).count();
-        auto encodeTime = std::chrono::duration_cast<std::chrono::milliseconds>(tEncodeEnd - tParseEnd).count();
-        auto decodeTime = std::chrono::duration_cast<std::chrono::milliseconds>(tDecodeEnd - tEncodeEnd).count();
-        auto totalTime  = std::chrono::duration_cast<std::chrono::milliseconds>(tDecodeEnd - tStart).count();
 
-        std::cout << "Parse JSON: " << parseTime << " ms\n";
-        std::cout << "Encode CHAOS: " << encodeTime << " ms\n";
-        std::cout << "Decode CHAOS: " << decodeTime << " ms\n";
-        std::cout << "Total time: " << totalTime << " ms\n";
-        std::cout << "Output written to: " << outputChaosFile << "\n";
+        bool isMilliSeconds = true;
+        auto endMarker =  isMilliSeconds ? " ms (" : " μs\n";
+
+        // ---- Timing ----
+        if (isEncodingNeeded == "y") {
+            auto parseTime      = std::chrono::duration_cast<std::chrono::milliseconds>(tParseEnd - tStart).count();
+            auto encodeChaosTime = std::chrono::duration_cast<std::chrono::milliseconds>(tEncodeChaosEnd - tParseEnd).count();
+            auto writeJsonTime   = std::chrono::duration_cast<std::chrono::milliseconds>(tJsonWriteEnd - tEncodeChaosEnd).count();
+            auto decodeChaosTime = std::chrono::duration_cast<std::chrono::milliseconds>(tDecodeChaosEnd - tJsonWriteEnd).count();
+            auto totalTime       = std::chrono::duration_cast<std::chrono::milliseconds>(tDecodeChaosEnd - tStart).count();
+
+            std::cout << "\nParse JSON: " << parseTime << endMarker << (parseTime/1000) << " sec)\n";
+            std::cout << "Encode CHAOS: " << encodeChaosTime << endMarker << (encodeChaosTime/1000) << " sec)\n"; 
+            std::cout << "Write back JSON: " << writeJsonTime << endMarker << (writeJsonTime/1000) << " sec)\n";
+            std::cout << "Decode CHAOS: " << decodeChaosTime << endMarker << (decodeChaosTime/1000) << " sec)\n";
+            std::cout << "Total time: " << totalTime << endMarker << (totalTime/1000) << " sec)\n";
+
+            std::cout << "JSON output written to: " << outputChaosFile << ".json\n";
+        }
+        else {
+            auto decodeTime = std::chrono::duration_cast<std::chrono::milliseconds>(tDecodeChaosEnd - tStart).count();
+            std::cout << "\nDecode CHAOS: " << decodeTime << endMarker << (decodeTime/1000) << " sec)\n";
+            std::cout << "Total time: " << decodeTime << endMarker << (decodeTime/1000) << " sec)\n";
+        }
+
+        std::cout << "CHAOS output written to: " << outputChaosFile << "\n";
 
     } catch (const std::exception& ex) {
         std::cerr << "Error: " << ex.what() << "\n";
