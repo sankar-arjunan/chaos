@@ -13,3 +13,5 @@ void List::add(const Value& v) { elements.push_back(v); }
 Value List::toValue() const { return Value(*this); }
 
 Value Custom::toValue() const { return Value(*this); }
+
+Value Reference::toValue() const { return Value(*this); }

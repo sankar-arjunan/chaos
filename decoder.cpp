@@ -9,7 +9,6 @@
 #include <stdexcept>
 #include <cstring>
 #include <lz4.h>
-#include "encoder.hpp"
 #include "datastruct.hpp"
 
 class MMapDecoder {
@@ -256,7 +255,7 @@ public:
         for (long i = 0; i < entityCount; i++) {
             const uint8_t* b_ptr = readNBytesPtr(offsetSize);
             long val = 0;
-            std::memcpy(&val, b_ptr, offsetSize); // Assumes machine is little-endian
+            std::memcpy(&val, b_ptr, offsetSize); 
             entityTable.push_back(val);
         }
         

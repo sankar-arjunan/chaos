@@ -9,7 +9,6 @@
 #include <stdexcept>
 #include <cstring>
 #include <lz4.h>
-#include "encoder.hpp"
 #include "datastruct.hpp"
 
 class MMapDecoderSelective {
@@ -30,6 +29,7 @@ public:
     }
 
     void setQuery(std::vector<std::string>& q){
+        queryOffset = 0;
         query = q;
     }
 
@@ -158,7 +158,7 @@ public:
                     size_t len = 1 << (subType & 0x03);
                     const uint8_t* data = readNBytesPtr(len);
                     int64_t val = 0;
-                    std::memcpy(&val, data, len); // Assumes machine is little-endian
+                    std::memcpy(&val, data, len);
                     if (subType & 0x04) val = -val;
                     return Value(val);
                 }
@@ -166,14 +166,14 @@ public:
                 if (subType == 0x08) {
                     const uint8_t* data = readNBytesPtr(4);
                     float fval;
-                    std::memcpy(&fval, data, sizeof(float)); // Assumes IEEE 754 float
+                    std::memcpy(&fval, data, sizeof(float));
                     return Value(fval);
                 }
 
                 if (subType == 0x09) {
                     const uint8_t* data = readNBytesPtr(8);
                     double dval;
-                    std::memcpy(&dval, data, sizeof(double)); // Assumes IEEE 754 double
+                    std::memcpy(&dval, data, sizeof(double));
                     return Value(dval);
                 }
                 throw std::runtime_error("Unhandled F0 subtype");
@@ -313,7 +313,7 @@ public:
         
         uint8_t peek = fileData[masterOffset];
         Value v;
-
+        
         if(queryOffset < query.size()){
             v = (peek & 0x80) ? decodeListSelective() : decodeObjectSelective();
         }
