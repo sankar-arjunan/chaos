@@ -1,105 +1,97 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <chrono>
+#include <fstream>
 #include <sstream>
 #include <iomanip>
-
 #include "selective_decoder.cpp"
 #include "datastruct.hpp"
-
+#include "encoder_parallel.hpp"
+#include "json.hpp"
 
 namespace py = pybind11;
+using json = nlohmann::json;
 
-void printValue(const Value& v, std::ostream& out, int indent) {
-    ValueType type = v.type();
-    auto printIndentStream = [&](int ind) {
-        for (int i = 0; i < ind; ++i) out << ' ';
-    };
-
-    switch (type) {
-        case ValueType::Null:    out << "null"; break;
-        case ValueType::String:  out << '"' << std::get<std::string>(v.data) << '"'; break;
-        case ValueType::Integer: out << std::get<int64_t>(v.data); break;
-        case ValueType::Float:   out << std::fixed << std::setprecision(6) << std::get<double>(v.data); break;
-        case ValueType::Boolean: out << (std::get<bool>(v.data) ? "true" : "false"); break;
-        case ValueType::Byte:    out << "(byte) " << (int)std::get<uint8_t>(v.data); break;
+py::object toPython(const Value& v) {
+    switch (v.type()) {
+        case ValueType::Null: return py::none();
+        case ValueType::String: return py::str(std::get<std::string>(v.data));
+        case ValueType::Integer: return py::int_(std::get<int64_t>(v.data));
+        case ValueType::Float: return py::float_(std::get<double>(v.data));
+        case ValueType::Boolean: return py::bool_(std::get<bool>(v.data));
+        case ValueType::Byte: return py::int_(std::get<uint8_t>(v.data));
         case ValueType::Object: {
-            const Object& obj = std::get<Object>(v.data);
-            out << "{\n";
-            for (size_t i = 0; i < obj.fields.size(); ++i) {
-                printIndentStream(indent + 2);
-                out << obj.fields[i].first << ": ";
-                printValue(obj.fields[i].second, out, indent + 2);
-                if (i + 1 < obj.fields.size()) out << ",";
-                out << "\n";
-            }
-            printIndentStream(indent);
-            out << "}";
-            break;
+            const Object& o = std::get<Object>(v.data);
+            py::dict d;
+            for (auto& [k, val] : o.fields) d[py::str(k)] = toPython(val);
+            return d;
         }
         case ValueType::List: {
-             const List& list = std::get<List>(v.data);
-             out << "[\n";
-             for (size_t i = 0; i < list.elements.size(); ++i) {
-                 printIndentStream(indent + 2);
-                 printValue(list.elements[i], out, indent + 2);
-                 if (i + 1 < list.elements.size()) out << ",";
-                 out << "\n";
-             }
-             printIndentStream(indent);
-             out << "]";
-             break;
-         }
-         case ValueType::Custom: {
-             const Custom& c = std::get<Custom>(v.data);
-             out << "(Custom id=" << (int)c.id << ", data=" << c.data.size() << " bytes)";
-             break;
-         }
-        default: out << "<unknown>"; break;
+            const List& lst = std::get<List>(v.data);
+            py::list l;
+            for (auto& el : lst.elements) l.append(toPython(el));
+            return l;
+        }
+        case ValueType::Custom: {
+            const Custom& c = std::get<Custom>(v.data);
+            std::ostringstream oss;
+            for (auto b : c.data)
+                oss << std::hex << std::setw(2) << std::setfill('0') << (int)b;
+            return py::bytes(oss.str());
+        }
+        default: return py::str("<unknown>");
     }
 }
-void printValue(const Value& v, int indent) {
-    printValue(v, std::cout, indent);
+
+Value jsonToValue(const json& j) {
+    if (j.is_object()) {
+        Object o;
+        for (auto it = j.begin(); it != j.end(); ++it)
+            o.add(it.key(), jsonToValue(it.value()));
+        return o.toValue();
+    }
+    if (j.is_array()) {
+        List l;
+        for (auto& el : j) l.add(jsonToValue(el));
+        return l.toValue();
+    }
+    if (j.is_string()) return Value(j.get<std::string>());
+    if (j.is_number_integer()) return Value((int64_t)j.get<int64_t>());
+    if (j.is_number_float()) return Value(j.get<double>());
+    if (j.is_boolean()) return Value(j.get<bool>());
+    if (j.is_null()) return Value();
+    throw std::runtime_error("Unsupported JSON value type");
 }
 
-
-
-// Helper: convert Value to string (reuse your printValue logic)
-std::string valueToString(const Value& v) {
-    std::ostringstream oss;
-    printValue(v, 0); // if you have this function from CLI
-    return oss.str();
-}
-
-
-
-std::pair<std::string, long long>
+std::pair<py::object, long long>
 chaos_query(const std::string& chaos_file,
-            const std::vector<std::vector<std::string>>& queries)
-{
-    MMapDecoderSelective decoder;
-    std::ostringstream out;
-    auto start = std::chrono::high_resolution_clock::now();
-
+            const std::vector<std::vector<std::string>>& queries) {
+    MMapDecoderSelective d;
+    py::list results;
+    auto s = std::chrono::high_resolution_clock::now();
     for (size_t i = 0; i < queries.size(); ++i) {
-        auto q = queries[i];  
-        decoder.setQuery(q);
-        Value res = (i == 0)
-            ? decoder.decode(chaos_file)
-            : decoder.decodeWrapper(0);
-        printValue(res, out, 0);
+        auto q = queries[i];
+        d.setQuery(q);
+        Value r = (i == 0) ? d.decode(chaos_file) : d.decodeWrapper(0);
+        results.append(toPython(r));
     }
+    auto e = std::chrono::high_resolution_clock::now();
+    return {results, std::chrono::duration_cast<std::chrono::milliseconds>(e - s).count()};
+}
 
-    auto end = std::chrono::high_resolution_clock::now();
-    long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-
-    return {out.str(), ms};
+long long chaos_encode(const std::string& json_file, const std::string& chaos_file) {
+    std::ifstream ifs(json_file);
+    if (!ifs) throw std::runtime_error("Failed to open " + json_file);
+    json j; ifs >> j;
+    Value root = jsonToValue(j);
+    EncoderP enc;
+    auto s = std::chrono::high_resolution_clock::now();
+    enc.encode(root, chaos_file);
+    auto e = std::chrono::high_resolution_clock::now();
+    return std::chrono::duration_cast<std::chrono::milliseconds>(e - s).count();
 }
 
 PYBIND11_MODULE(pychaos, m) {
-    m.doc() = "Minimal CHAOS Python binding for selective queries";
-    m.def("query", &chaos_query,
-          "Run selective queries on a CHAOS file",
-          py::arg("chaos_file"),
-          py::arg("queries"));
+    m.def("query", &chaos_query, py::arg("chaos_file"), py::arg("queries"));
+    m.def("encode", &chaos_encode, py::arg("json_file"), py::arg("chaos_file"));
 }
