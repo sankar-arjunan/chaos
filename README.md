@@ -128,4 +128,5 @@ make clean
 ```
 
 **Version:** v1.1 – includes full Python bindings for encoding, decoding, and selective query sessions.
+
 Developed by **Gowri Sankar A**, 2025.
