@@ -8,6 +8,7 @@
 #include "datastruct.hpp"
 #include "encoder_parallel.hpp"
 #include "json.hpp"
+#include "decoder_parallel.cpp"
 
 namespace py = pybind11;
 using json = nlohmann::json;
@@ -63,21 +64,40 @@ Value jsonToValue(const json& j) {
     throw std::runtime_error("Unsupported JSON value type");
 }
 
-std::pair<py::object, long long>
+std::tuple<py::object, long long, py::object>
 chaos_query(const std::string& chaos_file,
-            const std::vector<std::vector<std::string>>& queries) {
-    MMapDecoderSelective d;
+            const std::vector<std::vector<std::string>>& queries,
+            py::object existing_decoder = py::none()) 
+{
+    MMapDecoderSelective* decoder_ptr;
+    bool owns_decoder = false;
+
+    if (!existing_decoder.is_none()) {
+        decoder_ptr = existing_decoder.cast<MMapDecoderSelective*>();
+    } else {
+        decoder_ptr = new MMapDecoderSelective();
+        owns_decoder = true;
+    }
+
     py::list results;
     auto s = std::chrono::high_resolution_clock::now();
+
     for (size_t i = 0; i < queries.size(); ++i) {
         auto q = queries[i];
-        d.setQuery(q);
-        Value r = (i == 0) ? d.decode(chaos_file) : d.decodeWrapper(0);
+        decoder_ptr->setQuery(q);
+        Value r = (existing_decoder.is_none() && i == 0)
+                    ? decoder_ptr->decode(chaos_file)
+                    : decoder_ptr->decodeWrapper(0);
         results.append(toPython(r));
     }
+
     auto e = std::chrono::high_resolution_clock::now();
-    return {results, std::chrono::duration_cast<std::chrono::milliseconds>(e - s).count()};
+    long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(e - s).count();
+
+    py::object decoder_obj = py::cast(decoder_ptr, py::return_value_policy::reference);
+    return std::make_tuple(results, ms, decoder_obj);
 }
+
 
 long long chaos_encode(const std::string& json_file, const std::string& chaos_file) {
     std::ifstream ifs(json_file);
@@ -91,7 +111,27 @@ long long chaos_encode(const std::string& json_file, const std::string& chaos_fi
     return std::chrono::duration_cast<std::chrono::milliseconds>(e - s).count();
 }
 
-PYBIND11_MODULE(pychaos, m) {
-    m.def("query", &chaos_query, py::arg("chaos_file"), py::arg("queries"));
-    m.def("encode", &chaos_encode, py::arg("json_file"), py::arg("chaos_file"));
+std::pair<py::object, long long> chaos_decode(const std::string& chaos_file) {
+    MMapDecoderParallel d;
+    auto s = std::chrono::high_resolution_clock::now();
+    Value v = d.decode(chaos_file);
+    auto e = std::chrono::high_resolution_clock::now();
+    long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(e - s).count();
+    return {toPython(v), ms};
 }
+
+PYBIND11_MODULE(pychaos, m) {
+    py::class_<MMapDecoderSelective>(m, "Decoder");
+    m.def("query", &chaos_query,
+          py::arg("chaos_file"),
+          py::arg("queries"),
+          py::arg("decoder") = nullptr,
+          R"pbdoc(
+              Run selective queries on a CHAOS file.
+              Reuse returned decoder for faster repeated queries.
+          )pbdoc");
+
+    m.def("encode", &chaos_encode, py::arg("json_file"), py::arg("chaos_file"));
+    m.def("decode", &chaos_decode, py::arg("chaos_file"));
+}
+

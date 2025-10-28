@@ -1,172 +1,131 @@
 # CHAOS: Compressed Hierarchical Addressable Object Structure
 
-**CHAOS** is a next-generation binary serialization format built for **speed, compactness, and instant query access** on massive read-only datasets.
-It bridges the gap between JSON’s flexibility and FlatBuffers’ performance — delivering **microsecond-level queries** without sacrificing schema freedom or self-description.
+**CHAOS** is a next-generation binary serialization format optimized for **speed**, **compactness**, and **microsecond-level query access**.
+It bridges JSON’s flexibility with FlatBuffers-level performance — enabling **direct field access without full decoding**.
 
 ---
 
-## Why CHAOS?
+## Features
 
-Unlike traditional binary formats that require predefined schemas or full data deserialization, CHAOS offers:
-
-* **Self-Describing Format:** No schema files needed — CHAOS encodes metadata and dictionaries inline.
-* **JSON-Compatible Hierarchy:** Mirrors JSON structure for easy integration with existing pipelines.
-* **Instant Random Queries:** Decode only what you ask for — access deep fields in microseconds without loading full data.
-* **Memory-Mapped Access:** Uses `mmap` for zero-copy reads on huge files (gigabyte-scale data with minimal RAM).
-* **Compact Storage:** Typically 40–70% of original JSON size.
-* **Parallel Engine:** Fully multithreaded encoding and decoding paths for maximum throughput.
-
----
-
-## Architecture Overview
-
-A `.chaos` file consists of:
-
-1. **Header Size** – variable-encoded integer.
-2. **Header Block** – includes:
-
-   * Global dictionary (keys, type descriptors)
-   * Entity count
-   * Offset table width
-   * Offset table (random access lookup table)
-3. **Data Region** – encoded Objects, Lists, and Values in compact binary layout.
-   References use table IDs; primitives are encoded directly (int, float, bool, string).
-
-On decode, CHAOS memory-maps the file, reads only the header once, and lazily resolves offsets on demand.
-That makes second-query lookups nearly instantaneous.
+* **Self-Describing:** No schemas needed. Every `.chaos` file encodes its own structure and dictionary.
+* **JSON-Compatible:** Fully hierarchical, supports arbitrary nesting of lists and objects.
+* **Selective Decoding:** Reads only the queried fields.
+* **Memory-Mapped:** Zero-copy read performance on gigabyte-scale data.
+* **Compact Encoding:** 40–70% smaller than JSON.
+* **Parallel Engine:** Multithreaded encoding and decoding.
+* **Python API:** High-performance bindings (`pychaos`) for AI and analytics pipelines.
 
 ---
 
-## Example Usage
+## File Layout
 
-### 1. Encode JSON → CHAOS
+1. **Header Size** (variable integer)
+2. **Header Block**
+
+   * Global key dictionary
+   * Object count
+   * Offset table
+3. **Data Region** (compact binary encoding of primitives, lists, and objects)
+
+Memory mapping ensures that subsequent queries reuse the already-loaded header and offsets for near-zero latency lookups.
+
+---
+
+## Command-Line Examples
+
+### Encode JSON → CHAOS
 
 ```bash
 ./chaos_tool encode parallel data.json data.chaos
 ```
 
-### 2. Decode CHAOS → JSON
+### Decode CHAOS → JSON
 
 ```bash
 ./chaos_tool decode parallel data.chaos
 ```
 
-### 3. Query Specific Fields (Single)
+### Selective Query
 
 ```bash
-./chaos_tool decode query data.chaos 45 location lat
+./chaos_tool decode query data.chaos 42 telemetry temperature
 ```
 
-### 4. Query Multiple Fields 
+### Multi-Query
 
 ```bash
-./chaos_tool decode query telemetry.chaos 45 location lat '|' 53 sensors temperature '|' 98 timestamp '|' 32 status
+./chaos_tool decode query data.chaos 42 telemetry temp '|' 45 timestamp
 ```
 
 Output:
 
 ```
-Query 1 (/45/location/lat): 36.692696 (695 ms)
-Query 2 (/53/sensors/temperature): 5.14 (7 µs)
-Query 3 (/98/timestamp): "2025-10-11T10:42:50.970520" (9 µs)
-Query 4 (/32/status): "OK" (5 µs)
+Query 1 (/42/telemetry/temp): 22.4 (1.3 ms)
+Query 2 (/45/timestamp): "2025-10-11T10:41:23.970520" (9 µs)
 ```
 
 ---
 
-## Design Philosophy
+## Python Integration (`pychaos`)
 
-CHAOS was created to power **AI pipelines, telemetry systems, and edge analytics** — where most operations require only selective reads from immutable data.
-Instead of decoding terabytes just to fetch one field, CHAOS gives **direct indexed access** to the required nodes.
-
-It’s ideal for:
-
-* AI preprocessing and feature extraction pipelines
-* Sensor/IoT telemetry stores
-* Log archives and ML dataset caches
-* Any system where **read-only structured data** must be queried in real time
-
----
-
-## Build Instructions
-
-### Prerequisites
-
-* C++17 or newer (GCC ≥ 9, Clang ≥ 11)
-* LZ4 development library (`liblz4-dev` on Linux, `brew install lz4` on macOS)
-
-### Build (Manual)
-
-```bash
-g++ -std=c++17 -O3 -I. \
-    encoder.cpp encoder_parallel.cpp decoder.cpp decoder_parallel.cpp datastruct.cpp main.cpp \
-    -llz4 -o chaos_tool_v1
-```
-
-**Current Version:** v1.0 — Core encoder/decoder/query engine (C++)
-
----
-
-## Benchmark Snapshot (1 GB dataset)
-
-| Operation            | Time                 |
-| -------------------- | -------------------- |
-| JSON encode          | 1241408 ms           |
-| CHAOS encode         | 432451 ms (parallel) |
-| JSON decode          | 426117 ms            |
-| CHAOS decode         | 243311 ms            |
-| JSON query           | 54561 ms             |
-| CHAOS query (cold)   | 2388 ms              |
-| CHAOS query (cached) | 5–9 µs               |
-
----
-
-## 🔧 Makefile & Python Binding
-
-The repository now includes a **Makefile** to simplify builds and a **Python binding** (`pychaos`) for high-level selective queries.
-
-### Build everything
-
-```bash
-make
-```
-
-### Build Python module only
+### Build
 
 ```bash
 make pychaos
 ```
 
-This compiles `pychaos_query.cpp` into a native extension (`pychaos.so`), allowing direct use from Python.
+This builds `pychaos.so`, the Python extension module.
 
-### Example Python usage
+### Encode and Query
 
 ```python
 import pychaos
 
+# Encode JSON to CHAOS
+ms = pychaos.encode("JSON/sample.json", "CHAOS/sample.chaos")
+print("Encoded in", ms, "ms")
+
+# Query fields
 queries = [
+    ["0", "device"],
     ["1", "timestamp"],
-    ["2", "device_id"]
+    ["1", "sensor", "temperature"]
 ]
 
-result, ms = pychaos.query("CHAOS/telemetry.chaos", queries)
-print(f"Query done in {ms} ms, result size = {len(result)} bytes")
+results, t, dec = pychaos.query("CHAOS/sample.chaos", queries)
+print("Query:", results, "Time:", t, "ms")
+
+# Reuse decoder for faster queries
+queries2 = [["2", "sensor", "pressure"]]
+results2, t2, _ = pychaos.query("CHAOS/sample.chaos", queries2, dec)
+print("Second query:", results2, "Time:", t2, "ms")
 ```
 
-### Build standalone CLI binary
+---
+
+## Performance Snapshot (1 GB dataset)
+
+| Operation             | Time (ms) | Speedup vs JSON |
+| --------------------- | --------- | --------------- |
+| JSON full parse       | 237987    | 1×              |
+| CHAOS full decode     | 72965     | 3.3×            |
+| CHAOS selective query | 953       | 249.7×          |
+
+---
+
+## Build System
+
+### Build all targets
 
 ```bash
-make cmdline
-./cmdline
+make
 ```
 
-### Clean everything
+### Clean
 
 ```bash
 make clean
 ```
 
----
-
-Developed by **Gowri Sankar A**, 2025.  
-*Compressed Hierarchical Addressable Object Structure with Selective Decoding*
+**Version:** v1.1 – includes full Python bindings for encoding, decoding, and selective query sessions.
+Developed by **Gowri Sankar A**, 2025.
