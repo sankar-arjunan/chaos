@@ -57,7 +57,7 @@ That makes second-query lookups nearly instantaneous.
 ./chaos_tool decode query data.chaos 45 location lat
 ```
 
-### 4. Query Multiple Fields (Parallel Query Mode)
+### 4. Query Multiple Fields 
 
 ```bash
 ./chaos_tool decode query telemetry.chaos 45 location lat '|' 53 sensors temperature '|' 98 timestamp '|' 32 status
@@ -95,7 +95,7 @@ It’s ideal for:
 * C++17 or newer (GCC ≥ 9, Clang ≥ 11)
 * LZ4 development library (`liblz4-dev` on Linux, `brew install lz4` on macOS)
 
-### Build
+### Build (Manual)
 
 ```bash
 g++ -std=c++17 -O3 -I. \
@@ -117,6 +117,56 @@ g++ -std=c++17 -O3 -I. \
 | CHAOS decode         | 243311 ms            |
 | JSON query           | 54561 ms             |
 | CHAOS query (cold)   | 2388 ms              |
-| CHAOS query (cached) | 5-9 µs               |
+| CHAOS query (cached) | 5–9 µs               |
 
-Developed by Gowri Sankar A, 2025. Compressed Hierarchical Addressable Object Structure with Selective Decoding
+---
+
+## 🔧 Makefile & Python Binding
+
+The repository now includes a **Makefile** to simplify builds and a **Python binding** (`pychaos`) for high-level selective queries.
+
+### Build everything
+
+```bash
+make
+```
+
+### Build Python module only
+
+```bash
+make pychaos
+```
+
+This compiles `pychaos_query.cpp` into a native extension (`pychaos.so`), allowing direct use from Python.
+
+### Example Python usage
+
+```python
+import pychaos
+
+queries = [
+    ["1", "timestamp"],
+    ["2", "device_id"]
+]
+
+result, ms = pychaos.query("CHAOS/telemetry.chaos", queries)
+print(f"Query done in {ms} ms, result size = {len(result)} bytes")
+```
+
+### Build standalone CLI binary
+
+```bash
+make cmdline
+./cmdline
+```
+
+### Clean everything
+
+```bash
+make clean
+```
+
+---
+
+Developed by **Gowri Sankar A**, 2025.  
+*Compressed Hierarchical Addressable Object Structure with Selective Decoding*
