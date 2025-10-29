@@ -166,8 +166,6 @@ int main(int argc, char* argv[]) {
             std::string inputJsonFile = argv[3];
             std::string outputChaosFile = argv[4];
 
-            auto tStart = std::chrono::high_resolution_clock::now();
-
             std::ifstream ifs(inputJsonFile);
             if (!ifs) throw std::runtime_error("Failed to open JSON file: " + inputJsonFile);
             json j;
@@ -175,6 +173,9 @@ int main(int argc, char* argv[]) {
 
             Value rootValue = jsonToValue(j);
             j = nullptr;
+
+
+            auto tStart = std::chrono::high_resolution_clock::now();
 
             if (encoder_type == "serial") {
                 Encoder encoderS;

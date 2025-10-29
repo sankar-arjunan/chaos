@@ -19,6 +19,8 @@ class MMapDecoderSelective {
     std::vector<std::string> query;
     long queryOffset = 0;
 
+    int mode = 0;
+
     std::vector<std::string> dictionary;
     std::vector<long> entityTable;
     std::unordered_map<uint8_t, size_t> customSizeMap;
@@ -271,15 +273,45 @@ public:
         return decodeValue();
     }
 
-        Value decodeObject() {
+    Value decodeObject() {
         uint8_t byte = readByte();
         long count = byte & 0x7F;
         if (count == 0x7F) count = readVarNumber();
 
         Object obj;
         long offsetSize = readByte();
+
+        if (mode == 1) {
+            List keys_result;
+
+            std::vector<long> offsets(count);
+            for (int i = 0; i < count; i++) {
+                const uint8_t* keyOffsetPtr = readNBytesPtr(offsetSize);
+                long keyOffset = 0;
+                std::memcpy(&keyOffset, keyOffsetPtr, offsetSize);
+                offsets[i] = keyOffset;
+            }
+
+            long baseOffsetForData = masterOffset;
+            for (int i = 0; i < count; i++) {
+                masterOffset = baseOffsetForData + offsets[i];
+
+                long keyIdx = readVarNumber();
+                if (keyIdx >= dictionary.size()) throw std::runtime_error("Invalid key index");
+
+                keys_result.add(Value(dictionary[keyIdx]));
+            }
+
+            return keys_result;
+        }
+
+
+        if(mode == 2){
+            return Value((int64_t)count);
+        }
         
         masterOffset += offsetSize * count;
+
 
         for (int i = 0; i < count; i++) {
             long keyIdx = readVarNumber();
@@ -298,6 +330,14 @@ public:
         long offsetSize = readByte();
 
         masterOffset += offsetSize * count;
+
+        if(mode == 1){
+            throw std::runtime_error("Invalid Keys request to List item");
+        }
+
+        if(mode == 2){
+            return Value((int64_t) count);
+        }
         
         l.elements.reserve(count);
         for (int i = 0; i < count; i++) {
@@ -323,8 +363,61 @@ public:
         return v;
     }
 
+    void load(const std::string& filename){
+        loadFile(filename);
+        
+        long headerLength = readVarNumber();
+        long entityCount = readVarNumber();
+
+        uint8_t dictFlag = readByte();
+        std::vector<uint8_t> dictBuffer;
+        if (dictFlag == 0xFF) {
+            long sz = readVarNumber();
+            long og = readVarNumber();
+            const uint8_t* comp_ptr = readNBytesPtr(sz);
+            dictBuffer = uncompressBuffer(comp_ptr, sz, og);
+        } else {
+            const uint8_t* dict_ptr = readNBytesPtr(dictFlag);
+            dictBuffer.assign(dict_ptr, dict_ptr + dictFlag);
+        }
+
+        size_t dictOffset = 0;
+        while (dictOffset < dictBuffer.size()) {
+            auto [stringLength, bytesConsumed] = readVarNumberFromBuffer(dictBuffer, dictOffset);
+            dictOffset += bytesConsumed;
+            if (dictOffset + stringLength > dictBuffer.size()) {
+                throw std::runtime_error("Invalid dictionary format");
+            }
+            dictionary.emplace_back(reinterpret_cast<const char*>(dictBuffer.data() + dictOffset), stringLength);
+            dictOffset += stringLength;
+        }
+
+        uint8_t offsetSize = readByte();
+        entityTable.reserve(entityCount);
+        for (long i = 0; i < entityCount; i++) {
+            const uint8_t* b_ptr = readNBytesPtr(offsetSize);
+            long val = 0;
+            std::memcpy(&val, b_ptr, offsetSize);
+            entityTable.push_back(val);
+        }
+        
+        baseOffset = masterOffset;
+    }
+
+    Value getKeys() {
+        mode = 1;
+        return decodeWrapper(0);
+    }
+
+    Value getLen() {
+        mode = 2;
+        return decodeWrapper(0);
+    }
+
     Value decode(const std::string& filename) {
         loadFile(filename);
+
+        mode = 0;
         
         long headerLength = readVarNumber();
         long entityCount = readVarNumber();

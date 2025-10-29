@@ -64,39 +64,119 @@ Value jsonToValue(const json& j) {
     throw std::runtime_error("Unsupported JSON value type");
 }
 
-std::tuple<py::object, long long, py::object>
+// chaos_bindings_fixes.cpp
+
+py::object chaos_load(const std::string& chaos_file) {
+    auto* decoder_ptr = new MMapDecoderSelective();
+    decoder_ptr->load(chaos_file);
+    return py::cast(decoder_ptr, py::return_value_policy::take_ownership);
+}
+
+std::tuple<py::object, long long>
 chaos_query(const std::string& chaos_file,
             const std::vector<std::vector<std::string>>& queries,
-            py::object existing_decoder = py::none()) 
+            py::object existing_decoder = py::none())
 {
-    MMapDecoderSelective* decoder_ptr;
-    bool owns_decoder = false;
+    MMapDecoderSelective* decoder_ptr = nullptr;
+    std::unique_ptr<MMapDecoderSelective> owned_decoder; // if we create one, we own it
 
-    if (!existing_decoder.is_none()) {
-        decoder_ptr = existing_decoder.cast<MMapDecoderSelective*>();
+    if (existing_decoder.is_none()) {
+        owned_decoder.reset(new MMapDecoderSelective());
+        owned_decoder->load(chaos_file);
+        decoder_ptr = owned_decoder.get();
     } else {
-        decoder_ptr = new MMapDecoderSelective();
-        owns_decoder = true;
+        decoder_ptr = existing_decoder.cast<MMapDecoderSelective*>();
+        if (!decoder_ptr) throw std::runtime_error("Invalid decoder object passed");
     }
 
     py::list results;
     auto s = std::chrono::high_resolution_clock::now();
 
     for (size_t i = 0; i < queries.size(); ++i) {
-        auto q = queries[i];
-        decoder_ptr->setQuery(q);
-        Value r = (existing_decoder.is_none() && i == 0)
-                    ? decoder_ptr->decode(chaos_file)
-                    : decoder_ptr->decodeWrapper(0);
+        const auto& q = queries[i];
+        decoder_ptr->setQuery(const_cast<std::vector<std::string>&>(const_cast<std::vector<std::string>&>(q)));
+        Value r;
+        // first query must call decode() only if we created and haven't previously used this decoder to query
+        // safe behavior: if owned_decoder is non-null -> do a decodeWrapper(0) after load, selective traversal works
+        // but decodeWrapper expects entityTable/baseOffset to be set (they are after load)
+        r = decoder_ptr->decodeWrapper(0);
         results.append(toPython(r));
     }
 
     auto e = std::chrono::high_resolution_clock::now();
-    long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(e - s).count();
+    long long ms = std::chrono::duration_cast<std::chrono::microseconds>(e - s).count();
 
-    py::object decoder_obj = py::cast(decoder_ptr, py::return_value_policy::reference);
-    return std::make_tuple(results, ms, decoder_obj);
+    return std::make_tuple(results, ms);
 }
+
+std::tuple<py::object, long long>
+chaos_keys(const std::string& chaos_file,
+           const std::vector<std::vector<std::string>>& queries,
+           py::object existing_decoder = py::none())
+{
+    MMapDecoderSelective* decoder_ptr = nullptr;
+    std::unique_ptr<MMapDecoderSelective> owned_decoder;
+
+    if (existing_decoder.is_none()) {
+        owned_decoder.reset(new MMapDecoderSelective());
+        owned_decoder->load(chaos_file);
+        decoder_ptr = owned_decoder.get();
+    } else {
+        decoder_ptr = existing_decoder.cast<MMapDecoderSelective*>();
+        if (!decoder_ptr) throw std::runtime_error("Invalid decoder object passed");
+    }
+
+    py::list results;
+    auto s = std::chrono::high_resolution_clock::now();
+
+    for (size_t i = 0; i < queries.size(); ++i) {
+        const auto& q = queries[i];
+        decoder_ptr->setQuery(const_cast<std::vector<std::string>&>(const_cast<std::vector<std::string>&>(q)));
+        // ensure queryOffset starts at 0 inside setQuery (your setQuery does this)
+        // ensure decodeWrapper reads from baseOffset/entityTable (load() populated these)
+        Value r = decoder_ptr->getKeys();
+        results.append(toPython(r));
+    }
+
+    auto e = std::chrono::high_resolution_clock::now();
+    long long ms = std::chrono::duration_cast<std::chrono::microseconds>(e - s).count();
+
+    return std::make_tuple(results, ms);
+}
+
+std::tuple<py::object, long long>
+chaos_len(const std::string& chaos_file,
+          const std::vector<std::vector<std::string>>& queries,
+          py::object existing_decoder = py::none())
+{
+    MMapDecoderSelective* decoder_ptr = nullptr;
+    std::unique_ptr<MMapDecoderSelective> owned_decoder;
+
+    if (existing_decoder.is_none()) {
+        owned_decoder.reset(new MMapDecoderSelective());
+        owned_decoder->load(chaos_file);
+        decoder_ptr = owned_decoder.get();
+    } else {
+        decoder_ptr = existing_decoder.cast<MMapDecoderSelective*>();
+        if (!decoder_ptr) throw std::runtime_error("Invalid decoder object passed");
+    }
+
+    py::list results;
+    auto s = std::chrono::high_resolution_clock::now();
+
+    for (size_t i = 0; i < queries.size(); ++i) {
+        const auto& q = queries[i];
+        decoder_ptr->setQuery(const_cast<std::vector<std::string>&>(const_cast<std::vector<std::string>&>(q)));
+        Value r = decoder_ptr->getLen();
+        results.append(toPython(r));
+    }
+
+    auto e = std::chrono::high_resolution_clock::now();
+    long long ms = std::chrono::duration_cast<std::chrono::microseconds>(e - s).count();
+
+    return std::make_tuple(results, ms);
+}
+
 
 
 long long chaos_encode(const std::string& json_file, const std::string& chaos_file) {
@@ -108,30 +188,42 @@ long long chaos_encode(const std::string& json_file, const std::string& chaos_fi
     auto s = std::chrono::high_resolution_clock::now();
     enc.encode(root, chaos_file);
     auto e = std::chrono::high_resolution_clock::now();
-    return std::chrono::duration_cast<std::chrono::milliseconds>(e - s).count();
+    return std::chrono::duration_cast<std::chrono::microseconds>(e - s).count();
 }
 
-std::pair<py::object, long long> chaos_decode(const std::string& chaos_file) {
+std::pair<py::object, unsigned long long> chaos_decode(const std::string& chaos_file) {
     MMapDecoderParallel d;
     auto s = std::chrono::high_resolution_clock::now();
     Value v = d.decode(chaos_file);
     auto e = std::chrono::high_resolution_clock::now();
-    long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(e - s).count();
+    long long ms = std::chrono::duration_cast<std::chrono::microseconds>(e - s).count();
     return {toPython(v), ms};
 }
+
 
 PYBIND11_MODULE(pychaos, m) {
     py::class_<MMapDecoderSelective>(m, "Decoder");
     m.def("query", &chaos_query,
           py::arg("chaos_file"),
           py::arg("queries"),
-          py::arg("decoder") = nullptr,
-          R"pbdoc(
-              Run selective queries on a CHAOS file.
-              Reuse returned decoder for faster repeated queries.
-          )pbdoc");
+          py::arg("decoder")
+    );
+    
+    m.def("len", &chaos_len,
+          py::arg("chaos_file"),
+          py::arg("queries"),
+          py::arg("decoder")
+    );
+
+    m.def("keys", &chaos_keys,
+          py::arg("chaos_file"),
+          py::arg("queries"),
+          py::arg("decoder")
+    );
+
 
     m.def("encode", &chaos_encode, py::arg("json_file"), py::arg("chaos_file"));
     m.def("decode", &chaos_decode, py::arg("chaos_file"));
+    m.def("load", &chaos_load, py::arg("chaos_load"));
 }
 
